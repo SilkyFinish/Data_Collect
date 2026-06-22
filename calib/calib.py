@@ -11,6 +11,20 @@ from r3kit.utils.vis import Sequence2DVisualizer
 from r3kit.utils.log import print, logger
 
 
+MIN_VALID_SAMPLES = 3
+
+
+def sample_paths(save_path: str, idx: int) -> Tuple[str, str]:
+    pose_path = os.path.join(save_path, f'b2g_pose_{idx}.npy')
+    image_path = os.path.join(save_path, f'rgb_{idx}.png')
+    return pose_path, image_path
+
+
+def sample_exists(save_path: str, idx: int) -> bool:
+    pose_path, image_path = sample_paths(save_path, idx)
+    return os.path.exists(pose_path) and os.path.exists(image_path)
+
+
 class ArgumentParser(Tap):
     robot_id: str = 'Rizon4s-063231'
     tool_name: str = 'Flange'
@@ -28,10 +42,10 @@ class ArgumentParser(Tap):
 
 
 def main(args: ArgumentParser):
-    exist_data = os.path.exists(args.save_path)
-    logger.info(f"Exist data: {exist_data}")
+    use_saved_data = sample_exists(args.save_path, 0)
+    logger.info(f"Use saved data: {use_saved_data}")
 
-    if not exist_data:
+    if not use_saved_data:
         robot = Rizon(id=args.robot_id, gripper=args.gripper, tool_name=args.tool_name, name=args.robot_name)
         camera = RealSenseCamera(id=args.camera_id, streams=args.camera_streams, name=args.camera_name)
         os.makedirs(args.save_path, exist_ok=True)
@@ -46,24 +60,31 @@ def main(args: ArgumentParser):
     while True:
         logger.info(f"{i}th")
 
-        if not exist_data:
-            # HandEyeCalibor eye-to-hand expects gripper -> base, not base -> gripper.
-            g2b_pose = np.linalg.inv(robot.tcp_read())
+        if not use_saved_data:
+            # Eye-to-hand expects the flange pose in the robot base frame.
+            b2g_pose = robot.tcp_read()
             color = camera.get()['color']
         else:
-            g2b_pose = np.load(os.path.join(args.save_path, f'g2b_pose_{i}.npy'))
-            color = cv2.imread(os.path.join(args.save_path, f'rgb_{i}.png'), cv2.IMREAD_COLOR)
+            if not sample_exists(args.save_path, i):
+                break
+            pose_path, image_path = sample_paths(args.save_path, i)
+            b2g_pose = np.load(pose_path)
+            color = cv2.imread(image_path, cv2.IMREAD_COLOR)
 
         if args.gui:
             vis2d.update_image(name='color', image=color, type='bgr')
 
-        if not exist_data:
+        if not use_saved_data:
             cmd = input("whether save? (y/n): ")
             if cmd == 'y':
-                np.save(os.path.join(args.save_path, f'g2b_pose_{i}.npy'), g2b_pose)
-                cv2.imwrite(os.path.join(args.save_path, f"rgb_{i}.png"), color)
-                calibor.add_image_pose(color, g2b_pose, vis=args.gui)
-                i += 1
+                detected = calibor.add_image_pose(color, b2g_pose, vis=args.gui)
+                if detected:
+                    pose_path, image_path = sample_paths(args.save_path, i)
+                    np.save(pose_path, b2g_pose)
+                    cv2.imwrite(image_path, color)
+                    i += 1
+                else:
+                    logger.warning("No ArUco marker detected. Sample not saved.")
             elif cmd == 'n':
                 cmd = input("whether quit? (y/n): ")
                 if cmd == 'y':
@@ -75,12 +96,16 @@ def main(args: ArgumentParser):
             else:
                 raise ValueError
         else:
-            calibor.add_image_pose(color, g2b_pose, vis=args.gui)
+            detected = calibor.add_image_pose(color, b2g_pose, vis=args.gui)
+            if not detected:
+                logger.warning(f"No ArUco marker detected in saved sample {i}. Skipped.")
             i += 1
-            if not os.path.exists(os.path.join(args.save_path, f'g2b_pose_{i}.npy')):
-                break
 
-    if not exist_data:
+    valid_samples = len(calibor.b2g)
+    if valid_samples < MIN_VALID_SAMPLES:
+        raise RuntimeError(f"Not enough valid samples: {valid_samples}, need at least {MIN_VALID_SAMPLES}.")
+
+    if not use_saved_data:
         intrinsics = camera.color_intrinsics
     else:
         intrinsics = np.loadtxt(os.path.join(args.save_path, 'intrinsics.txt'))
