@@ -36,11 +36,17 @@ def parse_args():
     )
     parser.add_argument("-1", "--first-sn", required=True, help="Master robot serial number")
     parser.add_argument("-2", "--second-sn", required=True, help="Slave robot serial number")
-    parser.add_argument("--master-gripper-id", required=True, help="Master Xense gripper ID")
-    parser.add_argument("--slave-gripper-id", required=True, help="Slave Xense gripper ID")
+    parser.add_argument("--master-gripper-id", default=None, help="Master Xense gripper ID")
+    parser.add_argument("--slave-gripper-id", default=None, help="Slave Xense gripper ID")
     parser.add_argument("--save-root", required=True, help="Root directory for collected data")
     parser.add_argument("--session-name", default=None, help="Optional session directory name")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Collection FPS")
+    parser.add_argument(
+        "--use-gripper",
+        type=parse_bool,
+        default=True,
+        help="Whether to initialize, sync, and collect Xense grippers",
+    )
     parser.add_argument(
         "--network-interface",
         action="append",
@@ -50,7 +56,22 @@ def parse_args():
     parser.add_argument("--gripper-eps", type=float, default=1e-4, help="Gripper sync threshold")
     parser.add_argument("--gripper-wait-time", type=float, default=0.1, help="Delay after gripper move")
     parser.add_argument("--null-space-period", type=float, default=0.1, help="Main loop period")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.use_gripper and (not args.master_gripper_id or not args.slave_gripper_id):
+        parser.error("--use-gripper true requires --master-gripper-id and --slave-gripper-id")
+    return args
+
+
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+
+    value = value.lower()
+    if value in ("true", "1", "yes", "y"):
+        return True
+    if value in ("false", "0", "no", "n"):
+        return False
+    raise argparse.ArgumentTypeError("Expected true or false")
 
 
 def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_order):
@@ -62,6 +83,9 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "tcp_pose_source": "CartesianTeleopLAN.robot_states()[1].tcp_pose",
             "tdk_tcp_pose_order": tdk_tcp_pose_order,
             "saved_tcp_pose_order": saved_tcp_pose_order,
+            "slave_gripper_width_source": (
+                "slave_gripper.read()" if args.use_gripper else "constant_zero"
+            ),
         }
     )
     return metadata
@@ -90,6 +114,7 @@ def run_keyboard_loop(
     gripper_eps,
     gripper_wait_time,
     null_space_period,
+    use_gripper,
 ) -> None:
     import termios
     import tty
@@ -116,13 +141,14 @@ def run_keyboard_loop(
                 logger.info("Quit requested by keyboard")
                 break
 
-            last_master_width = sync_gripper(
-                master_gripper,
-                slave_gripper,
-                last_master_width,
-                gripper_eps,
-                gripper_wait_time,
-            )
+            if use_gripper:
+                last_master_width = sync_gripper(
+                    master_gripper,
+                    slave_gripper,
+                    last_master_width,
+                    gripper_eps,
+                    gripper_wait_time,
+                )
             teleop_pair.sync_null_space_postures()
             time.sleep(null_space_period)
     finally:
@@ -168,14 +194,26 @@ def main() -> None:
             args.second_sn,
             network_interface_whitelist=args.network_interface,
         ) as teleop_pair:
-            master_gripper = init_xense(args.master_gripper_id, "master_xense")
-            slave_gripper = init_xense(args.slave_gripper_id, "slave_xense")
+            master_gripper = None
+            slave_gripper = None
+            if args.use_gripper:
+                master_gripper = init_xense(args.master_gripper_id, "master_xense")
+                slave_gripper = init_xense(args.slave_gripper_id, "slave_xense")
+
             cameras = init_cameras(D415_CAMERAS, args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)
 
             collect_thread = threading.Thread(
                 target=collect_teleop_data,
-                args=(state_reader, slave_gripper, cameras, session_dir, stop_event, args.fps),
+                args=(
+                    state_reader,
+                    slave_gripper,
+                    cameras,
+                    session_dir,
+                    stop_event,
+                    args.fps,
+                    args.use_gripper,
+                ),
                 daemon=True,
             )
             collect_thread.start()
@@ -188,6 +226,7 @@ def main() -> None:
                     args.gripper_eps,
                     args.gripper_wait_time,
                     args.null_space_period,
+                    args.use_gripper,
                 )
             finally:
                 stop_collection(stop_event, collect_thread)

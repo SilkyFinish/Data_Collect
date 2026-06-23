@@ -14,13 +14,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from r3kit.devices.camera.realsense import config as rs_cfg
 from r3kit.devices.camera.realsense.d415 import D415
-from r3kit.devices.gripper.xense.xense import Xense
 
 
 FPS = 30
 D415_CAMERAS = {
     "cam_327322062498": "327322062498",
-    "cam_319522062799": "319522062799",
 }
 
 
@@ -85,7 +83,9 @@ def init_cameras(
     }
 
 
-def init_xense(gripper_id: str, name: str = "Xense") -> Xense:
+def init_xense(gripper_id: str, name: str = "Xense"):
+    from r3kit.devices.gripper.xense.xense import Xense
+
     gripper = Xense(id=gripper_id, name=name)
     gripper.block(blocking=False)
     return gripper
@@ -120,6 +120,7 @@ def collect_teleop_data(
     session_dir: str,
     stop_event,
     fps: int = FPS,
+    use_gripper: bool = True,
     status_period: int = 100,
 ) -> None:
     rate_control = RateControl(fps)
@@ -136,7 +137,7 @@ def collect_teleop_data(
         # TCP pose, joint angle, and gripper data collection
         try:
             tcp_xyz, tcp_quat_xyzw, slave_joint_angles = state_reader.read_saved_xyzquat()
-            slave_gripper_width = slave_gripper.read()
+            slave_gripper_width = slave_gripper.read() if use_gripper else 0.0
 
             pose_data = np.concatenate([tcp_xyz, tcp_quat_xyzw, [slave_gripper_width]])
             joint_data = np.concatenate([slave_joint_angles, [slave_gripper_width]])
