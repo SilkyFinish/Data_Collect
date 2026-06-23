@@ -1,0 +1,182 @@
+import json
+import os
+import sys
+import time
+from argparse import Namespace
+from datetime import datetime
+from typing import Any, Dict, Mapping, Optional
+
+import cv2
+import numpy as np
+import pyrealsense2 as rs
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from r3kit.devices.camera.realsense import config as rs_cfg
+from r3kit.devices.camera.realsense.d415 import D415
+from r3kit.devices.gripper.xense.xense import Xense
+
+
+FPS = 30
+D415_CAMERAS = {
+    "cam_327322062498": "327322062498",
+    "cam_319522062799": "319522062799",
+}
+
+
+def create_session_dirs(
+    save_root: str,
+    d415_cameras: Optional[Mapping[str, str]] = None,
+    session_name: Optional[str] = None,
+) -> str:
+    os.makedirs(save_root, exist_ok=True)
+
+    if session_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_name = f"record_{timestamp}"
+
+    session_dir = os.path.join(save_root, session_name)
+    os.makedirs(session_dir, exist_ok=True)
+
+    # camera directories
+    if d415_cameras:
+        for cam_name in d415_cameras.keys():
+            cam_dir = os.path.join(session_dir, cam_name)
+            os.makedirs(cam_dir, exist_ok=True)
+            os.makedirs(os.path.join(cam_dir, "color"), exist_ok=True)
+            os.makedirs(os.path.join(cam_dir, "depth"), exist_ok=True)
+
+    # data collection directories
+    os.makedirs(os.path.join(session_dir, "tcps"), exist_ok=True)
+    os.makedirs(os.path.join(session_dir, "angles"), exist_ok=True)
+
+    print(f"Data will be saved to: {session_dir}")
+    return session_dir
+
+
+def write_metadata(session_dir: str, metadata: Any) -> str:
+    if isinstance(metadata, Namespace):
+        metadata = vars(metadata)
+    else:
+        metadata = dict(metadata)
+
+    metadata.setdefault("created_at", datetime.now().isoformat(timespec="seconds"))
+    metadata_path = os.path.join(session_dir, "metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False, default=str)
+    return metadata_path
+
+
+def init_cameras(
+    d415_cameras: Optional[Mapping[str, str]] = None,
+    fps: int = FPS,
+) -> Dict[str, D415]:
+    if d415_cameras is None:
+        d415_cameras = D415_CAMERAS
+
+    rs_cfg.D415_STREAMS = [
+        (rs.stream.depth, 640, 480, rs.format.z16, fps),
+        (rs.stream.color, 640, 480, rs.format.bgr8, fps),
+    ]
+
+    return {
+        cam_name: D415(id=serial, depth=True, name=cam_name)
+        for cam_name, serial in d415_cameras.items()
+    }
+
+
+def init_xense(gripper_id: str, name: str = "Xense") -> Xense:
+    gripper = Xense(id=gripper_id, name=name)
+    gripper.block(blocking=False)
+    return gripper
+
+
+def save_camera_frames(
+    cameras: Mapping[str, D415],
+    session_dir: str,
+    frame_idx: int,
+) -> None:
+    for name, cam in cameras.items():
+        try:
+            color_frame, depth_frame = cam.get()
+
+            if color_frame is not None and depth_frame is not None:
+                cv2.imwrite(
+                    os.path.join(session_dir, name, "color", f"{frame_idx:016d}.png"),
+                    color_frame,
+                )
+                cv2.imwrite(
+                    os.path.join(session_dir, name, "depth", f"{frame_idx:016d}.png"),
+                    depth_frame,
+                )
+        except Exception as e:
+            print(f"Camera {name} collection failed: {e}")
+
+
+def collect_teleop_data(
+    state_reader,
+    slave_gripper,
+    cameras: Mapping[str, D415],
+    session_dir: str,
+    stop_event,
+    fps: int = FPS,
+    status_period: int = 100,
+) -> None:
+    rate_control = RateControl(fps)
+    frame_idx = 0
+
+    print("Start data collection...")
+
+    while not stop_event.is_set():
+        actual_rate = rate_control.sleep()
+
+        # camera data collection
+        save_camera_frames(cameras, session_dir, frame_idx)
+
+        # TCP pose, joint angle, and gripper data collection
+        try:
+            tcp_xyz, tcp_quat_xyzw, slave_joint_angles = state_reader.read_saved_xyzquat()
+            slave_gripper_width = slave_gripper.read()
+
+            pose_data = np.concatenate([tcp_xyz, tcp_quat_xyzw, [slave_gripper_width]])
+            joint_data = np.concatenate([slave_joint_angles, [slave_gripper_width]])
+
+            pose_path = os.path.join(session_dir, "tcps", f"tcp_{frame_idx:05d}.npy")
+            joint_path = os.path.join(session_dir, "angles", f"angle_{frame_idx:05d}.npy")
+            np.save(pose_path, pose_data)
+            np.save(joint_path, joint_data)
+
+        except Exception as e:
+            print(f"State data collection failed: {e}")
+
+        if status_period and frame_idx % status_period == 0:
+            print(f"Actual rate: {actual_rate:.2f} Hz, collected frames: {frame_idx}")
+
+        frame_idx += 1
+
+
+class RateControl:
+    def __init__(self, rate_hz):
+        self.rate_hz = rate_hz
+        self.interval = 1.0 / rate_hz
+        self.last_time = time.time()
+        self.actual_rate = 0
+        self.frame_count = 0
+        self.start_time = time.time()
+
+    def sleep(self):
+        now = time.time()
+        elapsed = now - self.last_time
+        sleep_time = self.interval - elapsed
+
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+        self.last_time = time.time()
+        self.frame_count += 1
+
+        total_time = time.time() - self.start_time
+        if total_time > 0:
+            self.actual_rate = self.frame_count / total_time
+
+        return self.actual_rate
