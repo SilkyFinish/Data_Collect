@@ -12,6 +12,7 @@ import select
 import sys
 import threading
 import time
+import flexivrdk
 
 DEFAULT_FPS = 30
 
