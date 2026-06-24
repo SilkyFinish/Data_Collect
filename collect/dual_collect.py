@@ -12,7 +12,8 @@ import select
 import sys
 import threading
 import time
-import flexivrdk
+import flexivrdk # this must be imported
+from datetime import datetime
 
 DEFAULT_FPS = 30
 
@@ -103,15 +104,62 @@ def sync_gripper(master_gripper, slave_gripper, last_width, eps, wait_time):
 
 
 def stop_collection(stop_event, collect_thread) -> None:
-    stop_event.set()
+    if stop_event is not None:
+        stop_event.set()
     if collect_thread is not None:
         collect_thread.join(timeout=2.0)
 
 
+def start_recording(
+    args,
+    state_reader,
+    slave_gripper,
+    cameras,
+    d415_cameras,
+    tdk_tcp_pose_order,
+    saved_tcp_pose_order,
+):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    session_name = f"{args.session_name}_{timestamp}" if args.session_name else f"record_{timestamp}"
+
+    session_dir = create_session_dirs(
+        args.save_root,
+        d415_cameras=d415_cameras,
+        session_name=session_name,
+    )
+    write_metadata(
+        session_dir,
+        build_metadata(args, d415_cameras, tdk_tcp_pose_order, saved_tcp_pose_order),
+    )
+
+    stop_event = threading.Event()
+    collect_thread = threading.Thread(
+        target=collect_teleop_data,
+        args=(
+            state_reader,
+            slave_gripper,
+            cameras,
+            session_dir,
+            stop_event,
+            args.fps,
+            args.use_gripper,
+        ),
+        daemon=True,
+    )
+    collect_thread.start()
+    return session_dir, stop_event, collect_thread
+
+
 def run_keyboard_loop(
+    args,
     teleop_pair,
+    state_reader,
+    cameras,
     master_gripper,
     slave_gripper,
+    d415_cameras,
+    tdk_tcp_pose_order,
+    saved_tcp_pose_order,
     gripper_eps,
     gripper_wait_time,
     null_space_period,
@@ -121,8 +169,14 @@ def run_keyboard_loop(
     import tty
 
     activated = False
+    recording = False
     last_master_width = None
-    print("Keyboard control enabled: press 'r' to start teleop, 's' to stop teleop, 'q' to quit")
+    stop_event = None
+    collect_thread = None
+    print(
+        "Keyboard control enabled: press 'r' to start teleop, 's' to stop teleop, "
+        "'c' to start recording, 'v' to stop recording, 'q' to quit"
+    )
 
     old_term_settings = termios.tcgetattr(sys.stdin)
     tty.setcbreak(sys.stdin.fileno())
@@ -138,6 +192,24 @@ def run_keyboard_loop(
                 teleop_pair.activate(False)
                 activated = False
                 logger.info("Teleoperation deactivated by keyboard")
+            elif key == "c" and not recording:
+                session_dir, stop_event, collect_thread = start_recording(
+                    args,
+                    state_reader,
+                    slave_gripper,
+                    cameras,
+                    d415_cameras,
+                    tdk_tcp_pose_order,
+                    saved_tcp_pose_order,
+                )
+                recording = True
+                logger.info("Recording started: %s", session_dir)
+            elif key == "v" and recording:
+                stop_collection(stop_event, collect_thread)
+                stop_event = None
+                collect_thread = None
+                recording = False
+                logger.info("Recording stopped")
             elif key == "q":
                 logger.info("Quit requested by keyboard")
                 break
@@ -153,6 +225,8 @@ def run_keyboard_loop(
             teleop_pair.sync_null_space_postures()
             time.sleep(null_space_period)
     finally:
+        if recording:
+            stop_collection(stop_event, collect_thread)
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_term_settings)
         if activated:
             teleop_pair.activate(False)
@@ -176,19 +250,6 @@ def main() -> None:
         write_metadata,
     )
 
-    session_dir = create_session_dirs(
-        args.save_root,
-        d415_cameras=D415_CAMERAS,
-        session_name=args.session_name,
-    )
-    write_metadata(
-        session_dir,
-        build_metadata(args, D415_CAMERAS, TDK_TCP_POSE_ORDER, SAVED_TCP_POSE_ORDER),
-    )
-
-    stop_event = threading.Event()
-    collect_thread = None
-
     try:
         with CartesianTeleopPair(
             args.first_sn,
@@ -204,38 +265,24 @@ def main() -> None:
             cameras = init_cameras(D415_CAMERAS, args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)
 
-            collect_thread = threading.Thread(
-                target=collect_teleop_data,
-                args=(
-                    state_reader,
-                    slave_gripper,
-                    cameras,
-                    session_dir,
-                    stop_event,
-                    args.fps,
-                    args.use_gripper,
-                ),
-                daemon=True,
+            run_keyboard_loop(
+                args,
+                teleop_pair,
+                state_reader,
+                cameras,
+                master_gripper,
+                slave_gripper,
+                D415_CAMERAS,
+                TDK_TCP_POSE_ORDER,
+                SAVED_TCP_POSE_ORDER,
+                args.gripper_eps,
+                args.gripper_wait_time,
+                args.null_space_period,
+                args.use_gripper,
             )
-            collect_thread.start()
-
-            try:
-                run_keyboard_loop(
-                    teleop_pair,
-                    master_gripper,
-                    slave_gripper,
-                    args.gripper_eps,
-                    args.gripper_wait_time,
-                    args.null_space_period,
-                    args.use_gripper,
-                )
-            finally:
-                stop_collection(stop_event, collect_thread)
     except Exception as e:
         logger.error(str(e))
         sys.exit(1)
-    finally:
-        stop_collection(stop_event, collect_thread)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,14 @@
 在机器人运行环境中执行：
 
 ```bash
+sh collect/run_dual_collect.sh
+```
+
+常用参数可以直接在 `run_dual_collect.sh` 顶部修改。
+
+也可以直接用命令行执行：
+
+```bash
 python collect/dual_collect.py \
   -1 <master_robot_sn> \
   -2 <slave_robot_sn> \
@@ -61,9 +69,19 @@ python collect/dual_collect.py \
 
 - `r`：激活主从遥操作。
 - `s`：暂停主从遥操作。
+- `c`：开始记录一条新轨迹。
+- `v`：结束当前轨迹记录。
 - `q`：退出采集。
 
-程序运行期间会持续采集相机、从臂 TCP、从臂关节角和从端夹爪宽度。
+推荐流程：
+
+```text
+启动程序 -> r 启动遥操作 -> c 开始记录 -> v 结束记录
+移动机械臂回到起点 -> c 记录下一条 -> v 结束下一条
+s 暂停遥操作 -> q 退出程序
+```
+
+每次按 `c` 都会创建一个新的轨迹目录，记录相机、从臂 TCP、从臂关节角和从端夹爪宽度。
 
 ## 数据结构
 
