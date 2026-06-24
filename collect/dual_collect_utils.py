@@ -97,20 +97,17 @@ def save_camera_frames(
     frame_idx: int,
 ) -> None:
     for name, cam in cameras.items():
-        try:
-            color_frame, depth_frame = cam.get()
+        color_frame, depth_frame = cam.get()
 
-            if color_frame is not None and depth_frame is not None:
-                cv2.imwrite(
-                    os.path.join(session_dir, name, "color", f"{frame_idx:016d}.png"),
-                    color_frame,
-                )
-                cv2.imwrite(
-                    os.path.join(session_dir, name, "depth", f"{frame_idx:016d}.png"),
-                    depth_frame,
-                )
-        except Exception as e:
-            print(f"Camera {name} collection failed: {e}")
+        if color_frame is not None and depth_frame is not None:
+            cv2.imwrite(
+                os.path.join(session_dir, name, "color", f"{frame_idx:016d}.png"),
+                color_frame,
+            )
+            cv2.imwrite(
+                os.path.join(session_dir, name, "depth", f"{frame_idx:016d}.png"),
+                depth_frame,
+            )
 
 
 def collect_teleop_data(
@@ -135,20 +132,16 @@ def collect_teleop_data(
         save_camera_frames(cameras, session_dir, frame_idx)
 
         # TCP pose, joint angle, and gripper data collection
-        try:
-            tcp_xyz, tcp_quat_xyzw, slave_joint_angles = state_reader.read_saved_xyzquat()
-            slave_gripper_width = slave_gripper.read() if use_gripper else 0.0
+        tcp_xyz, tcp_quat_xyzw, slave_joint_angles = state_reader.read_saved_xyzquat()
+        slave_gripper_width = slave_gripper.read() if use_gripper else 0.0
 
-            pose_data = np.concatenate([tcp_xyz, tcp_quat_xyzw, [slave_gripper_width]])
-            joint_data = np.concatenate([slave_joint_angles, [slave_gripper_width]])
+        pose_data = np.concatenate([tcp_xyz, tcp_quat_xyzw, [slave_gripper_width]])
+        joint_data = np.concatenate([slave_joint_angles, [slave_gripper_width]])
 
-            pose_path = os.path.join(session_dir, "tcps", f"tcp_{frame_idx:05d}.npy")
-            joint_path = os.path.join(session_dir, "angles", f"angle_{frame_idx:05d}.npy")
-            np.save(pose_path, pose_data)
-            np.save(joint_path, joint_data)
-
-        except Exception as e:
-            print(f"State data collection failed: {e}")
+        pose_path = os.path.join(session_dir, "tcps", f"tcp_{frame_idx:05d}.npy")
+        joint_path = os.path.join(session_dir, "angles", f"angle_{frame_idx:05d}.npy")
+        np.save(pose_path, pose_data)
+        np.save(joint_path, joint_data)
 
         if status_period and frame_idx % status_period == 0:
             print(f"Actual rate: {actual_rate:.2f} Hz, collected frames: {frame_idx}")

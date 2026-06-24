@@ -119,6 +119,8 @@ def start_recording(
     tdk_tcp_pose_order,
     saved_tcp_pose_order,
 ):
+    from dual_collect_utils import collect_teleop_data, create_session_dirs, write_metadata
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     session_name = f"{args.session_name}_{timestamp}" if args.session_name else f"record_{timestamp}"
 
