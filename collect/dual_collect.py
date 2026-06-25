@@ -38,7 +38,6 @@ def parse_args():
     )
     parser.add_argument("-1", "--first-sn", required=True, help="Master robot serial number")
     parser.add_argument("-2", "--second-sn", required=True, help="Slave robot serial number")
-    parser.add_argument("--master-gripper-id", default=None, help="Master Xense gripper ID")
     parser.add_argument("--slave-gripper-id", default=None, help="Slave Xense gripper ID")
     parser.add_argument("--save-root", required=True, help="Root directory for collected data")
     parser.add_argument("--session-name", default=None, help="Optional session directory name")
@@ -47,7 +46,7 @@ def parse_args():
         "--use-gripper",
         type=parse_bool,
         default=True,
-        help="Whether to initialize, sync, and collect Xense grippers",
+        help="Whether to initialize, sync, and collect slave gripper width",
     )
     parser.add_argument(
         "--network-interface",
@@ -58,9 +57,20 @@ def parse_args():
     parser.add_argument("--gripper-eps", type=float, default=1e-4, help="Gripper sync threshold")
     parser.add_argument("--gripper-wait-time", type=float, default=0.1, help="Delay after gripper move")
     parser.add_argument("--null-space-period", type=float, default=0.1, help="Main loop period")
+    parser.add_argument("--angler-id", default="/dev/ttyUSB0", help="Master Angler serial port")
+    parser.add_argument("--angler-index", type=int, default=1, help="Master Angler encoder index")
+    parser.add_argument("--angler-baudrate", type=int, default=1000000, help="Master Angler baudrate")
+    parser.add_argument("--angler-gap", type=float, default=-1.0, help="Master Angler read gap")
+    parser.add_argument("--angler-strict", type=parse_bool, default=True, help="Whether Angler uses strict CRC retry")
+    parser.add_argument("--angler-open-angle", type=float, default=51.68, help="Angle when slave gripper should be open")
+    parser.add_argument("--angler-close-angle", type=float, default=16.61, help="Angle when slave gripper should be closed")
+    parser.add_argument("--slave-open-width", type=float, default=0.085, help="Slave gripper open width in meters")
+    parser.add_argument("--slave-close-width", type=float, default=0.0, help="Slave gripper closed width in meters")
     args = parser.parse_args()
-    if args.use_gripper and (not args.master_gripper_id or not args.slave_gripper_id):
-        parser.error("--use-gripper true requires --master-gripper-id and --slave-gripper-id")
+    if args.use_gripper and not args.slave_gripper_id:
+        parser.error("--use-gripper true requires --slave-gripper-id")
+    if args.use_gripper and args.angler_open_angle == args.angler_close_angle:
+        parser.error("--angler-open-angle and --angler-close-angle must be different")
     return args
 
 
@@ -85,6 +95,11 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "tcp_pose_source": "CartesianTeleopLAN.robot_states()[1].tcp_pose",
             "tdk_tcp_pose_order": tdk_tcp_pose_order,
             "saved_tcp_pose_order": saved_tcp_pose_order,
+            "master_gripper_width_source": (
+                "disabled"
+                if not args.use_gripper
+                else "Angler angle linear mapping"
+            ),
             "slave_gripper_width_source": (
                 "slave_gripper.read()" if args.use_gripper else "constant_zero"
             ),
@@ -245,11 +260,9 @@ def main() -> None:
     )
     from dual_collect_utils import (
         D415_CAMERAS,
-        collect_teleop_data,
-        create_session_dirs,
         init_cameras,
+        init_angler_controller,
         init_xense,
-        write_metadata,
     )
 
     try:
@@ -261,8 +274,18 @@ def main() -> None:
             master_gripper = None
             slave_gripper = None
             if args.use_gripper:
-                master_gripper = init_xense(args.master_gripper_id, "master_xense")
                 slave_gripper = init_xense(args.slave_gripper_id, "slave_xense")
+                master_gripper = init_angler_controller(
+                    encoder_id=args.angler_id,
+                    index=args.angler_index,
+                    baudrate=args.angler_baudrate,
+                    gap=args.angler_gap,
+                    strict=args.angler_strict,
+                    open_angle=args.angler_open_angle,
+                    close_angle=args.angler_close_angle,
+                    open_width=args.slave_open_width,
+                    close_width=args.slave_close_width,
+                )
 
             cameras = init_cameras(D415_CAMERAS, args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)

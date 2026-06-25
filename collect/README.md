@@ -23,7 +23,6 @@ sh collect/run_dual_collect.sh
 python collect/dual_collect.py \
   -1 <master_robot_sn> \
   -2 <slave_robot_sn> \
-  --master-gripper-id <master_xense_id> \
   --slave-gripper-id <slave_xense_id> \
   --save-root <save_root>
 ```
@@ -32,7 +31,6 @@ python collect/dual_collect.py \
 
 - `-1, --first-sn`：主臂序列号。
 - `-2, --second-sn`：从臂序列号。
-- `--master-gripper-id`：主端 Xense 夹爪 ID。
 - `--slave-gripper-id`：从端 Xense 夹爪 ID。
 - `--save-root`：数据保存根目录。
 
@@ -108,3 +106,29 @@ record_YYYYmmdd_HHMMSS/
 - `angles/angle_*.npy`：`[q1, q2, q3, q4, q5, q6, q7, gripper_width]`
 
 其中 TCP 数据记录的是从臂状态。
+
+## 主端 Angler 编码器控制夹爪
+
+主端使用 Angler 编码器控制装置，可以在 `run_dual_collect.sh` 中设置：
+
+```bash
+USE_GRIPPER="true"
+ANGLER_ID="/dev/ttyUSB0"
+ANGLER_INDEX="1"
+ANGLER_BAUDRATE="1000000"
+ANGLER_GAP="-1"
+ANGLER_STRICT="true"
+ANGLER_OPEN_ANGLE="51.68"
+ANGLER_CLOSE_ANGLE="16.61"
+SLAVE_OPEN_WIDTH="0.085"
+SLAVE_CLOSE_WIDTH="0.0"
+```
+
+编码器角度会被线性映射为从端夹爪目标宽度：
+
+```text
+ANGLER_CLOSE_ANGLE -> SLAVE_CLOSE_WIDTH
+ANGLER_OPEN_ANGLE  -> SLAVE_OPEN_WIDTH
+```
+
+从端仍然使用 Xense，采集保存的 `gripper_width` 仍然来自 `slave_gripper.read()`。

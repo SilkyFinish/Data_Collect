@@ -91,6 +91,61 @@ def init_xense(gripper_id: str, name: str = "Xense"):
     return gripper
 
 
+class AnglerGripperController:
+    def __init__(
+        self,
+        encoder,
+        open_angle: float,
+        close_angle: float,
+        open_width: float,
+        close_width: float,
+    ) -> None:
+        if open_angle == close_angle:
+            raise ValueError("open_angle and close_angle must be different")
+        self.encoder = encoder
+        self.open_angle = float(open_angle)
+        self.close_angle = float(close_angle)
+        self.open_width = float(open_width)
+        self.close_width = float(close_width)
+
+    def read(self) -> float:
+        angle = float(np.asarray(self.encoder.get()["angle"]).reshape(-1)[0])
+        ratio = (angle - self.close_angle) / (self.open_angle - self.close_angle)
+        ratio = float(np.clip(ratio, 0.0, 1.0))
+        return self.close_width + ratio * (self.open_width - self.close_width)
+
+
+def init_angler_controller(
+    encoder_id: str,
+    index: int,
+    baudrate: int,
+    gap: float,
+    strict: bool,
+    open_angle: float,
+    close_angle: float,
+    open_width: float,
+    close_width: float,
+    name: str = "master_angler",
+) -> AnglerGripperController:
+    from r3kit.devices.encoder.pdcd.angler import Angler
+
+    encoder = Angler(
+        id=encoder_id,
+        index=[index],
+        baudrate=baudrate,
+        gap=gap,
+        strict=strict,
+        name=name,
+    )
+    return AnglerGripperController(
+        encoder=encoder,
+        open_angle=open_angle,
+        close_angle=close_angle,
+        open_width=open_width,
+        close_width=close_width,
+    )
+
+
 def save_camera_frames(
     cameras: Mapping[str, D415],
     session_dir: str,
