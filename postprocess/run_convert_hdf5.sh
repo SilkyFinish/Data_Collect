@@ -7,10 +7,10 @@ PYTHON_BIN="python3"
 
 # Input can be one session directory, or a root containing multiple sessions.
 # Multiple paths can be separated by spaces.
-SESSIONS="/home/xense/flexiv_hizon4s/Data/test"
+SESSIONS="/home/xense/flexiv_hizon4s/Data/pick_test"
 
 # Output HDF5 file for MaskACT-3D training.
-OUTPUT_HDF5="/home/xense/flexiv_hizon4s/Data/train_data.hdf5"
+OUTPUT_HDF5="/home/xense/flexiv_hizon4s/Train_Data/pick_test.hdf5"
 
 # Camera folder to export. Required when each session has multiple cameras.
 CAMERA_NAME="cam_327322062498"

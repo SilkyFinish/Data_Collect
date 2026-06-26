@@ -17,14 +17,14 @@ FIRST_SN="Rizon4s-063652"
 SECOND_SN="Rizon4s-063586"
 
 # Data collection
-SAVE_ROOT="/home/xense/flexiv_hizon4s/Data/test"
+SAVE_ROOT="/home/xense/flexiv_hizon4s/Data/pick_test"
 SESSION_NAME=""
 FPS="30"
 
 # Gripper collection: true or false.
 # Master side uses Angler encoder, slave side uses Xense.
 USE_GRIPPER="true"
-SLAVE_GRIPPER_ID="slave_xense_id"
+SLAVE_GRIPPER_ID="1659f0e0dde0"
 
 # Master Angler encoder settings.
 ANGLER_ID="/dev/ttyUSB0"
@@ -34,7 +34,7 @@ ANGLER_GAP="-1"
 ANGLER_STRICT="true"
 ANGLER_OPEN_ANGLE="51.68"
 ANGLER_CLOSE_ANGLE="16.61"
-SLAVE_OPEN_WIDTH="0.085"
+SLAVE_OPEN_WIDTH="0.08"
 SLAVE_CLOSE_WIDTH="0.0"
 
 # Optional LAN interface whitelist. Leave empty to let TDK try all interfaces.
@@ -70,7 +70,7 @@ if [ "$USE_GRIPPER" = "true" ]; then
     --angler-id "$ANGLER_ID" \
     --angler-index "$ANGLER_INDEX" \
     --angler-baudrate "$ANGLER_BAUDRATE" \
-    --angler-gap "$ANGLER_GAP" \
+    --angler-gap="${ANGLER_GAP}" \
     --angler-strict "$ANGLER_STRICT" \
     --angler-open-angle "$ANGLER_OPEN_ANGLE" \
     --angler-close-angle "$ANGLER_CLOSE_ANGLE" \
