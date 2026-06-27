@@ -11,7 +11,7 @@
 点云可视化需要：
 
 ```bash
-pip install numpy h5py open3d
+pip install numpy h5py open3d opencv-python
 ```
 
 TCP PyBullet 回放需要：
@@ -112,6 +112,35 @@ python validate_data/visualize_hdf5_pointcloud.py \
 --loop
 --no-color
 ```
+
+推荐先用单帧诊断确认 HDF5 点云和原始 RGBD 是否对齐：
+
+```bash
+python validate_data/visualize_hdf5_pointcloud.py \
+  --hdf5 /path/to/pick_test.hdf5 \
+  --demo demo_000 \
+  --frame 300 \
+  --source-session /path/to/record_xxx \
+  --camera-name cam_327322062498 \
+  --save-debug-dir validate_data/debug_frame_0300 \
+  --single-frame \
+  --point-size 4 \
+  --color-mode depth
+```
+
+诊断目录会输出：
+
+```text
+frame_0300_rgb.png
+frame_0300_depth_valid_mask.png
+frame_0300_depth_colormap.png
+frame_0300_raw_depth_full_overlay.png
+frame_0300_hdf5_points_overlay.png
+frame_0300_combined_overlay.png
+stats.txt
+```
+
+其中绿色区域表示原始 depth 有效区域，红点表示最终写入 HDF5 的 10000 个点投影回 RGB 图像的位置。若绿色区域本身缺失，说明主要是 RealSense 深度质量问题；若绿色完整但红点偏移，说明后处理坐标、内参或外参需要检查；若红点位置正确但稀疏，说明模型输入基本对齐，Open3D 只是辅助查看。
 
 点云 HDF5 中的 xyz 默认是 base/world 坐标系。`visualize_hdf5_pointcloud.py` 默认使用 `--coord-frame camera`，会读取 `Data_Collect/calib/data/extrinsics.txt`，对点云乘逆变换后在相机坐标系下显示。如果想直接查看 HDF5 中保存的原始坐标，使用：
 

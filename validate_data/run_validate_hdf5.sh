@@ -14,16 +14,29 @@ HDF5="/home/xense/flexiv_rizon4s_workspace/Train_Data/pick_test.hdf5"
 # Demo group under /data. Leave empty to use the first sorted demo.
 DEMO=""
 
+# Original collected session. Leave empty to use HDF5 demo attrs when available.
+SOURCE_SESSION="/home/xense/flexiv_rizon4s_workspace/Data/pick_test/record_20260626_164235_239926"
+CAMERA_NAME="cam_327322062498"
+
 # Point-cloud visualization options.
+POINTCLOUD_FRAME="300"
 POINTCLOUD_FPS="10"
 POINTCLOUD_START_FRAME="0"
 POINTCLOUD_STRIDE="1"
-POINTCLOUD_POINT_SIZE="2.0"
+POINTCLOUD_POINT_SIZE="4.0"
 POINTCLOUD_COORD_FRAME="camera"
+POINTCLOUD_COLOR_MODE="depth"
 # Leave empty to use Data_Collect/calib/data/extrinsics.txt.
 POINTCLOUD_CAMERA_C2W=""
+POINTCLOUD_INTRINSICS=""
+POINTCLOUD_DEPTH_SCALE="0.001"
+POINTCLOUD_DEPTH_MIN="0.000001"
+POINTCLOUD_DEPTH_MAX="100.0"
 POINTCLOUD_SAVE_FRAME="300"
 POINTCLOUD_SAVE_IMAGE=""
+POINTCLOUD_SAVE_DEBUG_DIR=""
+POINTCLOUD_SINGLE_FRAME="true"
+POINTCLOUD_DEBUG_ONLY="false"
 POINTCLOUD_LOOP="false"
 POINTCLOUD_NO_COLOR="false"
 POINTCLOUD_SUMMARY_ONLY="false"
@@ -106,23 +119,52 @@ run_pointcloud() {
   set -- \
     "$SCRIPT_DIR/visualize_hdf5_pointcloud.py" \
     --hdf5 "$HDF5" \
+    --frame "$POINTCLOUD_FRAME" \
     --fps "$POINTCLOUD_FPS" \
     --start-frame "$POINTCLOUD_START_FRAME" \
     --stride "$POINTCLOUD_STRIDE" \
     --point-size "$POINTCLOUD_POINT_SIZE" \
     --coord-frame "$POINTCLOUD_COORD_FRAME" \
+    --color-mode "$POINTCLOUD_COLOR_MODE" \
+    --depth-scale "$POINTCLOUD_DEPTH_SCALE" \
+    --depth-min "$POINTCLOUD_DEPTH_MIN" \
+    --depth-max "$POINTCLOUD_DEPTH_MAX" \
     --save-frame "$POINTCLOUD_SAVE_FRAME"
 
   if [ -n "$DEMO" ]; then
     set -- "$@" --demo "$DEMO"
   fi
 
+  if [ -n "$SOURCE_SESSION" ]; then
+    set -- "$@" --source-session "$SOURCE_SESSION"
+  fi
+
+  if [ -n "$CAMERA_NAME" ]; then
+    set -- "$@" --camera-name "$CAMERA_NAME"
+  fi
+
   if [ -n "$POINTCLOUD_CAMERA_C2W" ]; then
     set -- "$@" --camera-c2w "$POINTCLOUD_CAMERA_C2W"
   fi
 
+  if [ -n "$POINTCLOUD_INTRINSICS" ]; then
+    set -- "$@" --intrinsics "$POINTCLOUD_INTRINSICS"
+  fi
+
   if [ -n "$POINTCLOUD_SAVE_IMAGE" ]; then
     set -- "$@" --save-image "$POINTCLOUD_SAVE_IMAGE"
+  fi
+
+  if [ -n "$POINTCLOUD_SAVE_DEBUG_DIR" ]; then
+    set -- "$@" --save-debug-dir "$POINTCLOUD_SAVE_DEBUG_DIR"
+  fi
+
+  if [ "$POINTCLOUD_SINGLE_FRAME" = "true" ]; then
+    set -- "$@" --single-frame
+  fi
+
+  if [ "$POINTCLOUD_DEBUG_ONLY" = "true" ]; then
+    set -- "$@" --debug-only
   fi
 
   if [ "$POINTCLOUD_LOOP" = "true" ]; then
