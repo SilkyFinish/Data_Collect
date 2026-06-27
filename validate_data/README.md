@@ -105,8 +105,16 @@ python validate_data/visualize_hdf5_pointcloud.py \
 --start-frame 0
 --stride 1
 --point-size 2.0
+--coord-frame camera
+--camera-c2w /path/to/extrinsics.txt
 --loop
 --no-color
+```
+
+点云 HDF5 中的 xyz 默认是 base/world 坐标系。`visualize_hdf5_pointcloud.py` 默认使用 `--coord-frame camera`，会读取 `Data_Collect/calib/data/extrinsics.txt`，对点云乘逆变换后在相机坐标系下显示。如果想直接查看 HDF5 中保存的原始坐标，使用：
+
+```bash
+--coord-frame stored
 ```
 
 ## 直接运行 TCP 回放
