@@ -10,6 +10,22 @@ from typing import Iterable
 import numpy as np
 
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+DATA_COLLECT_ROOT = SCRIPT_DIR.parent
+DEFAULT_CAMERA_C2W = DATA_COLLECT_ROOT / "calib" / "data" / "extrinsics.txt"
+
+if str(DATA_COLLECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(DATA_COLLECT_ROOT))
+
+try:
+    from postprocess.pointcloud import load_camera_c2w, summarize_points, transform_points
+except ImportError as exc:
+    raise SystemExit(
+        "Failed to import postprocess.pointcloud. Run this script from Data_Collect "
+        "or keep the postprocess folder next to validate_data."
+    ) from exc
+
+
 def import_h5py():
     try:
         import h5py
@@ -32,57 +48,32 @@ def import_open3d():
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Play point-cloud frames stored in a generated MaskACT-3D HDF5 file."
+        description="Play HDF5 point-cloud frames in Open3D."
     )
-    parser.add_argument(
-        "--hdf5",
-        required=True,
-        type=Path,
-        help="Path to the generated .hdf5/.h5 file.",
-    )
+    parser.add_argument("--hdf5", required=True, type=Path)
     parser.add_argument(
         "--demo",
         default="",
         help="Demo name under /data, for example demo_000. Defaults to the first demo.",
     )
+    parser.add_argument("--fps", type=float, default=10.0)
+    parser.add_argument("--start-frame", type=int, default=0)
+    parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument("--point-size", type=float, default=2.0)
+    parser.add_argument("--loop", action="store_true")
+    parser.add_argument("--no-color", action="store_true")
+    parser.add_argument("--summary-only", action="store_true")
     parser.add_argument(
-        "--fps",
-        type=float,
-        default=10.0,
-        help="Playback FPS. Use 0 or a negative value to step as fast as rendering allows.",
+        "--coord-frame",
+        choices=("camera", "stored"),
+        default="camera",
+        help="Render in camera frame by default, or use stored HDF5 xyz directly.",
     )
     parser.add_argument(
-        "--start-frame",
-        type=int,
-        default=0,
-        help="Frame index to start playback from.",
-    )
-    parser.add_argument(
-        "--stride",
-        type=int,
-        default=1,
-        help="Frame stride for playback.",
-    )
-    parser.add_argument(
-        "--point-size",
-        type=float,
-        default=2.0,
-        help="Open3D render point size.",
-    )
-    parser.add_argument(
-        "--loop",
-        action="store_true",
-        help="Loop playback until the visualization window is closed.",
-    )
-    parser.add_argument(
-        "--no-color",
-        action="store_true",
-        help="Render all points with one neutral color instead of RGB from the HDF5.",
-    )
-    parser.add_argument(
-        "--summary-only",
-        action="store_true",
-        help="Print HDF5/demo summaries and exit without opening a window.",
+        "--camera-c2w",
+        type=Path,
+        default=DEFAULT_CAMERA_C2W,
+        help="Camera-to-base/world extrinsics used when --coord-frame camera.",
     )
     return parser.parse_args()
 
@@ -96,11 +87,8 @@ def sorted_demo_names(data_group) -> list[str]:
 
 
 def describe_attrs(attrs) -> str:
-    pieces: list[str] = []
-    for key in ("num_samples", "fps", "source_session", "camera_name"):
-        if key in attrs:
-            pieces.append(f"{key}={attrs[key]}")
-    return ", ".join(pieces)
+    keys = ("num_samples", "fps", "source_session", "camera_name")
+    return ", ".join(f"{key}={attrs[key]}" for key in keys if key in attrs)
 
 
 def print_file_summary(h5_file, demo_names: Iterable[str]) -> None:
@@ -111,9 +99,9 @@ def print_file_summary(h5_file, demo_names: Iterable[str]) -> None:
     print("Demos")
     for name in demo_names:
         demo_group = h5_file["data"][name]
+        suffix = describe_attrs(demo_group.attrs)
+        suffix = f" ({suffix})" if suffix else ""
         points = demo_group["points"]
-        attr_text = describe_attrs(demo_group.attrs)
-        suffix = f" ({attr_text})" if attr_text else ""
         print(f"  {name}: points shape={points.shape}, dtype={points.dtype}{suffix}")
 
 
@@ -121,39 +109,29 @@ def choose_demo(data_group, requested_demo: str) -> str:
     demo_names = sorted_demo_names(data_group)
     if not demo_names:
         raise ValueError("No demos with a 'points' dataset were found under /data.")
-
-    if requested_demo:
-        if requested_demo not in demo_names:
-            available = ", ".join(demo_names)
-            raise ValueError(
-                f"Demo '{requested_demo}' was not found under /data. "
-                f"Available demos: {available}"
-            )
-        return requested_demo
-
-    print(f"No --demo specified; using first demo: {demo_names[0]}")
-    return demo_names[0]
+    if not requested_demo:
+        print(f"No --demo specified; using first demo: {demo_names[0]}")
+        return demo_names[0]
+    if requested_demo not in demo_names:
+        raise ValueError(
+            f"Demo '{requested_demo}' was not found under /data. "
+            f"Available demos: {', '.join(demo_names)}"
+        )
+    return requested_demo
 
 
 def validate_points_dataset(points_ds, demo_name: str) -> None:
-    if points_ds.ndim != 3:
+    if points_ds.ndim != 3 or points_ds.shape[2] != 6:
         raise ValueError(
             f"/data/{demo_name}/points must have shape (T, N, 6), "
             f"got {points_ds.shape}"
         )
-    if points_ds.shape[2] != 6:
-        raise ValueError(
-            f"/data/{demo_name}/points last dimension must be 6 (xyzrgb), "
-            f"got {points_ds.shape[2]}"
-        )
-    if points_ds.shape[0] == 0:
-        raise ValueError(f"/data/{demo_name}/points has zero frames.")
-    if points_ds.shape[1] == 0:
-        raise ValueError(f"/data/{demo_name}/points has zero points per frame.")
+    if points_ds.shape[0] == 0 or points_ds.shape[1] == 0:
+        raise ValueError(f"/data/{demo_name}/points has empty frame or point dimension.")
 
 
 def validate_playback_args(args: argparse.Namespace, num_frames: int) -> None:
-    if args.start_frame < 0 or args.start_frame >= num_frames:
+    if not 0 <= args.start_frame < num_frames:
         raise ValueError(
             f"--start-frame must be in [0, {num_frames - 1}], got {args.start_frame}"
         )
@@ -163,23 +141,12 @@ def validate_playback_args(args: argparse.Namespace, num_frames: int) -> None:
         raise ValueError(f"--point-size must be positive, got {args.point_size}")
 
 
-def point_summary(points: np.ndarray) -> str:
-    xyz = points[:, :3]
-    rgb = points[:, 3:6]
-    return (
-        f"xyz_min={xyz.min(axis=0)} xyz_max={xyz.max(axis=0)} "
-        f"xyz_mean={xyz.mean(axis=0)} rgb_min={rgb.min(axis=0)} "
-        f"rgb_max={rgb.max(axis=0)}"
-    )
-
-
 def validate_frame(points: np.ndarray, frame_idx: int) -> None:
     if not np.isfinite(points).all():
         raise ValueError(f"Frame {frame_idx} contains NaN or Inf.")
 
-    rgb = points[:, 3:6]
-    rgb_min = float(rgb.min())
-    rgb_max = float(rgb.max())
+    rgb_min = float(points[:, 3:6].min())
+    rgb_max = float(points[:, 3:6].max())
     if rgb_min < -1e-3 or rgb_max > 1.0 + 1e-3:
         print(
             f"WARNING: frame {frame_idx} RGB range looks unusual: "
@@ -187,8 +154,25 @@ def validate_frame(points: np.ndarray, frame_idx: int) -> None:
         )
 
 
-def frame_indices(start_frame: int, num_frames: int, stride: int) -> list[int]:
-    return list(range(start_frame, num_frames, stride))
+def make_world_to_camera(args: argparse.Namespace) -> tuple[np.ndarray | None, str]:
+    if args.coord_frame == "stored":
+        return None, "stored HDF5 xyz"
+
+    camera_c2w_path = args.camera_c2w.expanduser()
+    if not camera_c2w_path.is_file():
+        raise FileNotFoundError(f"camera_c2w file does not exist: {camera_c2w_path}")
+
+    camera_c2w = load_camera_c2w(camera_c2w=str(camera_c2w_path))
+    return np.linalg.inv(camera_c2w), f"camera frame via inverse of {camera_c2w_path}"
+
+
+def display_points(points: np.ndarray, world_to_camera: np.ndarray | None) -> np.ndarray:
+    if world_to_camera is None:
+        return points
+
+    points = points.copy()
+    points[:, :3] = transform_points(points[:, :3], world_to_camera)
+    return points
 
 
 def make_colors(points: np.ndarray, no_color: bool) -> np.ndarray:
@@ -197,27 +181,39 @@ def make_colors(points: np.ndarray, no_color: bool) -> np.ndarray:
     return np.clip(points[:, 3:6], 0.0, 1.0).astype(np.float64, copy=False)
 
 
-def print_demo_checks(points_ds, demo_name: str, start_frame: int) -> None:
-    first = np.asarray(points_ds[start_frame], dtype=np.float32)
-    validate_frame(first, start_frame)
+def print_demo_checks(
+    points_ds,
+    demo_name: str,
+    start_frame: int,
+    world_to_camera: np.ndarray | None,
+    frame_text: str,
+) -> None:
+    points = np.asarray(points_ds[start_frame], dtype=np.float32)
+    validate_frame(points, start_frame)
+    points = display_points(points, world_to_camera)
+
     print(f"Selected demo: {demo_name}")
     print(f"Points dataset: shape={points_ds.shape}, dtype={points_ds.dtype}")
-    print(f"Frame {start_frame} summary: {point_summary(first)}")
+    print(f"Visualization frame: {frame_text}")
+    print(f"Frame {start_frame} display summary: {summarize_points(points)}")
 
 
-def play_points(points_ds, demo_name: str, args: argparse.Namespace) -> None:
+def play_points(
+    points_ds,
+    demo_name: str,
+    args: argparse.Namespace,
+    world_to_camera: np.ndarray | None,
+) -> None:
     o3d = import_open3d()
-
-    num_frames = points_ds.shape[0]
-    indices = frame_indices(args.start_frame, num_frames, args.stride)
-    if not indices:
-        raise ValueError("No frames selected for playback.")
-
+    frame_ids = list(range(args.start_frame, points_ds.shape[0], args.stride))
     frame_delay = 0.0 if args.fps <= 0 else 1.0 / args.fps
-    window_name = f"HDF5 point cloud - {demo_name}"
 
     visualizer = o3d.visualization.Visualizer()
-    if not visualizer.create_window(window_name=window_name, width=1280, height=720):
+    if not visualizer.create_window(
+        window_name=f"HDF5 point cloud - {demo_name} - {args.coord_frame}",
+        width=1280,
+        height=720,
+    ):
         raise RuntimeError("Failed to create the Open3D visualization window.")
 
     render_option = visualizer.get_render_option()
@@ -226,40 +222,37 @@ def play_points(points_ds, demo_name: str, args: argparse.Namespace) -> None:
 
     pcd = o3d.geometry.PointCloud()
     geometry_added = False
-
     print("Close the Open3D window to stop playback.")
+
     try:
         while True:
-            for frame_idx in indices:
-                start_time = time.perf_counter()
+            for frame_idx in frame_ids:
+                tic = time.perf_counter()
                 points = np.asarray(points_ds[frame_idx], dtype=np.float32)
                 validate_frame(points, frame_idx)
+                points = display_points(points, world_to_camera)
 
                 xyz = np.ascontiguousarray(points[:, :3], dtype=np.float64)
-                colors = np.ascontiguousarray(
-                    make_colors(points, args.no_color), dtype=np.float64
-                )
-
+                colors = np.ascontiguousarray(make_colors(points, args.no_color))
                 pcd.points = o3d.utility.Vector3dVector(xyz)
                 pcd.colors = o3d.utility.Vector3dVector(colors)
 
-                if not geometry_added:
-                    visualizer.add_geometry(pcd)
-                    geometry_added = True
-                    visualizer.reset_view_point(True)
-                else:
+                if geometry_added:
                     visualizer.update_geometry(pcd)
+                else:
+                    visualizer.add_geometry(pcd)
+                    visualizer.reset_view_point(True)
+                    geometry_added = True
 
                 alive = visualizer.poll_events()
                 visualizer.update_renderer()
-                print(f"\rPlaying {demo_name}: frame {frame_idx + 1}/{num_frames}", end="")
+                print(f"\rPlaying {demo_name}: frame {frame_idx + 1}/{points_ds.shape[0]}", end="")
                 sys.stdout.flush()
                 if not alive:
                     print()
                     return
 
-                elapsed = time.perf_counter() - start_time
-                sleep_time = frame_delay - elapsed
+                sleep_time = frame_delay - (time.perf_counter() - tic)
                 if sleep_time > 0:
                     time.sleep(sleep_time)
 
@@ -290,12 +283,18 @@ def main() -> None:
         points_ds = data_group[demo_name]["points"]
         validate_points_dataset(points_ds, demo_name)
         validate_playback_args(args, points_ds.shape[0])
-        print_demo_checks(points_ds, demo_name, args.start_frame)
 
-        if args.summary_only:
-            return
+        world_to_camera, frame_text = make_world_to_camera(args)
+        print_demo_checks(
+            points_ds,
+            demo_name,
+            args.start_frame,
+            world_to_camera,
+            frame_text,
+        )
 
-        play_points(points_ds, demo_name, args)
+        if not args.summary_only:
+            play_points(points_ds, demo_name, args, world_to_camera)
 
 
 if __name__ == "__main__":

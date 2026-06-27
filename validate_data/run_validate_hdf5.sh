@@ -19,6 +19,9 @@ POINTCLOUD_FPS="10"
 POINTCLOUD_START_FRAME="0"
 POINTCLOUD_STRIDE="1"
 POINTCLOUD_POINT_SIZE="2.0"
+POINTCLOUD_COORD_FRAME="camera"
+# Leave empty to use Data_Collect/calib/data/extrinsics.txt.
+POINTCLOUD_CAMERA_C2W=""
 POINTCLOUD_LOOP="false"
 POINTCLOUD_NO_COLOR="false"
 POINTCLOUD_SUMMARY_ONLY="false"
@@ -104,10 +107,15 @@ run_pointcloud() {
     --fps "$POINTCLOUD_FPS" \
     --start-frame "$POINTCLOUD_START_FRAME" \
     --stride "$POINTCLOUD_STRIDE" \
-    --point-size "$POINTCLOUD_POINT_SIZE"
+    --point-size "$POINTCLOUD_POINT_SIZE" \
+    --coord-frame "$POINTCLOUD_COORD_FRAME"
 
   if [ -n "$DEMO" ]; then
     set -- "$@" --demo "$DEMO"
+  fi
+
+  if [ -n "$POINTCLOUD_CAMERA_C2W" ]; then
+    set -- "$@" --camera-c2w "$POINTCLOUD_CAMERA_C2W"
   fi
 
   if [ "$POINTCLOUD_LOOP" = "true" ]; then
