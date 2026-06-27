@@ -42,10 +42,21 @@ python postprocess/convert_hdf5.py \
 --camera-c2w calib/data/extrinsics.txt
 --depth-scale 0.001
 --num-points 10000
+--depth-min 0.25
+--depth-max 1.60
 --compression lzf
 --frame-stride 1
 --max-frames 200
 ```
+
+`--depth-min/--depth-max` 在相机坐标系下过滤深度，默认会保留约 `0.25m ~ 1.60m` 的点，避免 RealSense 远距离异常深度进入训练数据。若需要进一步限制操作区域，可以增加 base/world 坐标系下的 workspace 裁剪：
+
+```bash
+--workspace-min X_MIN Y_MIN Z_MIN
+--workspace-max X_MAX Y_MAX Z_MAX
+```
+
+workspace crop 默认关闭，建议先通过 `validate_data` 的单帧诊断统计多帧 xyz 范围后再设置。
 
 ## 输入数据结构
 
@@ -89,7 +100,7 @@ record_YYYYmmdd_HHMMSS/
 点云生成通过 `hdf5_utils.make_policy_points_from_files()` 调用 `pointcloud.make_policy_points_from_rgbd()`，和部署侧使用同一套 RGBD 转点云流程：
 
 ```text
-color/depth -> camera frame xyzrgb -> camera_c2w -> base/world frame -> fixed 10000 points
+color/depth -> camera depth filter -> camera frame xyzrgb -> camera_c2w -> optional workspace crop -> base/world frame -> fixed 10000 points
 ```
 
 TCP 后处理通过 r3kit 的 `xyzquat2mat()` 和 `mat2xyzrot6d()`，将采集保存的：

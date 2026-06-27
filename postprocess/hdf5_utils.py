@@ -53,7 +53,11 @@ def make_policy_points_from_files(
     depth_scale: str | Path | float = 0.001,
     num_points: int = 10_000,
     downsample_seed: Optional[int] = 42,
-    depth_invalid_max: float = 100.0,
+    depth_invalid_max: Optional[float] = 100.0,
+    depth_min: float = 1e-6,
+    depth_max: Optional[float] = None,
+    workspace_min: Optional[Sequence[float]] = None,
+    workspace_max: Optional[Sequence[float]] = None,
 ) -> np.ndarray:
     """Read RGBD files and delegate point generation to pointcloud.py."""
     color_bgr, depth_u16 = read_rgbd(color_path, depth_path)
@@ -81,6 +85,10 @@ def make_policy_points_from_files(
         num_points=num_points,
         downsample_seed=downsample_seed,
         depth_invalid_max=depth_invalid_max,
+        depth_min=depth_min,
+        depth_max=depth_max,
+        workspace_min=workspace_min,
+        workspace_max=workspace_max,
     )
 
 

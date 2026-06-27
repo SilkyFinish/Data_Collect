@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 
@@ -77,6 +77,21 @@ def transform_points(xyz: np.ndarray, c2w: np.ndarray) -> np.ndarray:
     return (xyz_h @ c2w.astype(xyz.dtype).T)[:, :3]
 
 
+def workspace_filter(
+    xyz: np.ndarray,
+    workspace_min: Optional[Sequence[float]] = None,
+    workspace_max: Optional[Sequence[float]] = None,
+) -> np.ndarray:
+    mask = np.ones(xyz.shape[0], dtype=bool)
+    if workspace_min is not None:
+        lower = np.asarray(workspace_min, dtype=np.float32).reshape(3)
+        mask &= np.all(xyz >= lower, axis=1)
+    if workspace_max is not None:
+        upper = np.asarray(workspace_max, dtype=np.float32).reshape(3)
+        mask &= np.all(xyz <= upper, axis=1)
+    return mask
+
+
 def fixed_size_sample(
     points: np.ndarray,
     num_points: int,
@@ -103,7 +118,11 @@ def make_policy_points_from_rgbd(
     camera_c2w: np.ndarray,
     num_points: int = 10000,
     downsample_seed: Optional[int] = 42,
-    depth_invalid_max: float = 100.0,
+    depth_invalid_max: Optional[float] = 100.0,
+    depth_min: float = 1e-6,
+    depth_max: Optional[float] = None,
+    workspace_min: Optional[Sequence[float]] = None,
+    workspace_max: Optional[Sequence[float]] = None,
 ) -> np.ndarray:
     if color_bgr.ndim != 3 or color_bgr.shape[-1] != 3:
         raise ValueError(f"color_bgr must be HxWx3, got {color_bgr.shape}")
@@ -120,15 +139,25 @@ def make_policy_points_from_rgbd(
 
     xyz_cam, rgb_flat = rgbd_to_camera_points(depth_m, intrinsics, rgb)
 
+    max_depth = depth_max if depth_max is not None else depth_invalid_max
+    max_depth = np.inf if max_depth is None else float(max_depth)
     valid = (
         np.isfinite(xyz_cam).all(axis=1)
-        & (xyz_cam[:, 2] > 1e-6)
-        & (xyz_cam[:, 2] < float(depth_invalid_max))
+        & (xyz_cam[:, 2] > float(depth_min))
+        & (xyz_cam[:, 2] < max_depth)
     )
     xyz_cam = xyz_cam[valid]
     rgb_flat = rgb_flat[valid]
 
     xyz_world = transform_points(xyz_cam, camera_c2w)
+
+    workspace_valid = workspace_filter(
+        xyz_world,
+        workspace_min=workspace_min,
+        workspace_max=workspace_max,
+    )
+    xyz_world = xyz_world[workspace_valid]
+    rgb_flat = rgb_flat[workspace_valid]
 
     points = np.concatenate([xyz_world, rgb_flat], axis=1).astype(np.float32)
     points = fixed_size_sample(points, num_points, seed=downsample_seed).astype(np.float32)

@@ -23,7 +23,12 @@ DEPTH_SCALE="0.001"
 # Point cloud and HDF5 settings.
 NUM_POINTS="10000"
 DOWNSAMPLE_SEED="42"
-DEPTH_INVALID_MAX="100.0"
+DEPTH_MIN="0.25"
+DEPTH_MAX="1.60"
+DEPTH_INVALID_MAX=""
+# Optional base/world xyz crop after camera_c2w. Example: "0.2 -0.5 0.0"
+WORKSPACE_MIN=""
+WORKSPACE_MAX=""
 MASK_VALUE="0"
 FPS="30"
 DEMO_PREFIX="demo"
@@ -41,7 +46,8 @@ set -- \
   -o "$OUTPUT_HDF5" \
   --num-points "$NUM_POINTS" \
   --downsample-seed "$DOWNSAMPLE_SEED" \
-  --depth-invalid-max "$DEPTH_INVALID_MAX" \
+  --depth-min "$DEPTH_MIN" \
+  --depth-max "$DEPTH_MAX" \
   --mask-value "$MASK_VALUE" \
   --fps "$FPS" \
   --demo-prefix "$DEMO_PREFIX" \
@@ -63,6 +69,18 @@ fi
 
 if [ -n "$DEPTH_SCALE" ]; then
   set -- "$@" --depth-scale "$DEPTH_SCALE"
+fi
+
+if [ -n "$DEPTH_INVALID_MAX" ]; then
+  set -- "$@" --depth-invalid-max "$DEPTH_INVALID_MAX"
+fi
+
+if [ -n "$WORKSPACE_MIN" ]; then
+  set -- "$@" --workspace-min $WORKSPACE_MIN
+fi
+
+if [ -n "$WORKSPACE_MAX" ]; then
+  set -- "$@" --workspace-max $WORKSPACE_MAX
 fi
 
 if [ -n "$MAX_FRAMES" ]; then

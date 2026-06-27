@@ -63,7 +63,30 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-points", type=int, default=10_000)
     parser.add_argument("--downsample-seed", type=int, default=42)
-    parser.add_argument("--depth-invalid-max", type=float, default=100.0)
+    parser.add_argument("--depth-min", type=float, default=0.25)
+    parser.add_argument("--depth-max", type=float, default=None)
+    parser.add_argument(
+        "--depth-invalid-max",
+        type=float,
+        default=None,
+        help="Deprecated alias for --depth-max when --depth-max is omitted.",
+    )
+    parser.add_argument(
+        "--workspace-min",
+        nargs=3,
+        type=float,
+        default=None,
+        metavar=("X", "Y", "Z"),
+        help="Optional base/world xyz lower bound applied after camera_c2w.",
+    )
+    parser.add_argument(
+        "--workspace-max",
+        nargs=3,
+        type=float,
+        default=None,
+        metavar=("X", "Y", "Z"),
+        help="Optional base/world xyz upper bound applied after camera_c2w.",
+    )
     parser.add_argument(
         "--mask-value",
         type=int,
@@ -84,6 +107,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true")
 
     args = parser.parse_args()
+    if args.depth_max is None:
+        args.depth_max = (
+            args.depth_invalid_max if args.depth_invalid_max is not None else 1.60
+        )
+    if args.depth_min < 0.0 or args.depth_max <= args.depth_min:
+        parser.error("--depth-min/--depth-max must define a positive depth interval.")
+    if (args.workspace_min is None) != (args.workspace_max is None):
+        parser.error("--workspace-min and --workspace-max must be provided together.")
     return args
 
 
@@ -263,6 +294,10 @@ def write_demo(
             num_points=num_points,
             downsample_seed=args.downsample_seed,
             depth_invalid_max=args.depth_invalid_max,
+            depth_min=args.depth_min,
+            depth_max=args.depth_max,
+            workspace_min=args.workspace_min,
+            workspace_max=args.workspace_max,
         )
         tcp = make_policy_tcp(record.tcp_path, dtype=np.float32)
         points_ds[out_idx] = points
@@ -298,6 +333,10 @@ def convert_sessions(args: argparse.Namespace) -> None:
         h5_file.attrs["intrinsics"] = str(args.intrinsics)
         h5_file.attrs["camera_c2w"] = str(args.camera_c2w)
         h5_file.attrs["depth_scale"] = str(args.depth_scale)
+        h5_file.attrs["depth_min"] = args.depth_min
+        h5_file.attrs["depth_max"] = args.depth_max
+        h5_file.attrs["workspace_min"] = "" if args.workspace_min is None else args.workspace_min
+        h5_file.attrs["workspace_max"] = "" if args.workspace_max is None else args.workspace_max
         h5_file.attrs["compression"] = str(compression)
 
         data_group = h5_file.create_group("data")
