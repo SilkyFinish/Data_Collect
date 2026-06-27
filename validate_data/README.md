@@ -107,6 +107,8 @@ python validate_data/visualize_hdf5_pointcloud.py \
 --point-size 2.0
 --coord-frame camera
 --camera-c2w /path/to/extrinsics.txt
+--save-frame 300
+--save-image /path/to/frame_0300_pointcloud.png
 --loop
 --no-color
 ```
@@ -115,6 +117,12 @@ python validate_data/visualize_hdf5_pointcloud.py \
 
 ```bash
 --coord-frame stored
+```
+
+可视化脚本默认会在播放到 0-based `frame_idx=300` 时保存一张 PNG 截图。这个帧号对应采集目录里类似 `0000000000000300.png` 的 RGB 图像。若想关闭自动截图：
+
+```bash
+--save-frame -1
 ```
 
 ## 直接运行 TCP 回放

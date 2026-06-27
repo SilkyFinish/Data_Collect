@@ -64,6 +64,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--summary-only", action="store_true")
     parser.add_argument(
+        "--save-frame",
+        type=int,
+        default=300,
+        help="0-based HDF5 frame index to save as a PNG screenshot. Use -1 to disable.",
+    )
+    parser.add_argument(
+        "--save-image",
+        type=Path,
+        default=None,
+        help="Output PNG path for --save-frame. Defaults to validate_data/<hdf5>_<demo>_frame_xxxx_<coord>.png.",
+    )
+    parser.add_argument(
         "--coord-frame",
         choices=("camera", "stored"),
         default="camera",
@@ -139,6 +151,10 @@ def validate_playback_args(args: argparse.Namespace, num_frames: int) -> None:
         raise ValueError(f"--stride must be positive, got {args.stride}")
     if args.point_size <= 0:
         raise ValueError(f"--point-size must be positive, got {args.point_size}")
+    if args.save_frame >= num_frames:
+        raise ValueError(
+            f"--save-frame must be less than {num_frames}, got {args.save_frame}"
+        )
 
 
 def validate_frame(points: np.ndarray, frame_idx: int) -> None:
@@ -181,6 +197,23 @@ def make_colors(points: np.ndarray, no_color: bool) -> np.ndarray:
     return np.clip(points[:, 3:6], 0.0, 1.0).astype(np.float64, copy=False)
 
 
+def resolve_save_image_path(
+    args: argparse.Namespace,
+    hdf5_path: Path,
+    demo_name: str,
+) -> Path | None:
+    if args.save_frame < 0:
+        return None
+    if args.save_image is not None:
+        return args.save_image.expanduser().resolve()
+
+    filename = (
+        f"{hdf5_path.stem}_{demo_name}_"
+        f"frame_{args.save_frame:04d}_{args.coord_frame}.png"
+    )
+    return (SCRIPT_DIR / filename).resolve()
+
+
 def print_demo_checks(
     points_ds,
     demo_name: str,
@@ -203,10 +236,18 @@ def play_points(
     demo_name: str,
     args: argparse.Namespace,
     world_to_camera: np.ndarray | None,
+    save_image_path: Path | None,
 ) -> None:
     o3d = import_open3d()
     frame_ids = list(range(args.start_frame, points_ds.shape[0], args.stride))
     frame_delay = 0.0 if args.fps <= 0 else 1.0 / args.fps
+    image_saved = False
+
+    if save_image_path is not None and args.save_frame not in frame_ids:
+        print(
+            f"WARNING: --save-frame {args.save_frame} is not in the playback "
+            f"range selected by --start-frame {args.start_frame} and --stride {args.stride}."
+        )
 
     visualizer = o3d.visualization.Visualizer()
     if not visualizer.create_window(
@@ -246,6 +287,16 @@ def play_points(
 
                 alive = visualizer.poll_events()
                 visualizer.update_renderer()
+                if (
+                    save_image_path is not None
+                    and not image_saved
+                    and frame_idx == args.save_frame
+                ):
+                    save_image_path.parent.mkdir(parents=True, exist_ok=True)
+                    visualizer.capture_screen_image(str(save_image_path), do_render=True)
+                    image_saved = True
+                    print(f"\nSaved point-cloud screenshot: {save_image_path}")
+
                 print(f"\rPlaying {demo_name}: frame {frame_idx + 1}/{points_ds.shape[0]}", end="")
                 sys.stdout.flush()
                 if not alive:
@@ -294,7 +345,8 @@ def main() -> None:
         )
 
         if not args.summary_only:
-            play_points(points_ds, demo_name, args, world_to_camera)
+            save_image_path = resolve_save_image_path(args, hdf5_path, demo_name)
+            play_points(points_ds, demo_name, args, world_to_camera, save_image_path)
 
 
 if __name__ == "__main__":
