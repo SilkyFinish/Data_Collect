@@ -32,29 +32,6 @@ def load_camera_c2w(
     return mat.astype(np.float32)
 
 
-def load_intrinsics_from_transforms(transforms_json: str) -> Optional[np.ndarray]:
-    if not transforms_json:
-        return None
-    with open(transforms_json, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    keys = ("cx", "cy", "fx", "fy")
-    if not all(key in data for key in keys):
-        return None
-    return np.array([data["cx"], data["cy"], data["fx"], data["fy"]], dtype=np.float32)
-
-
-def intrinsics_close(
-    observed: np.ndarray,
-    expected: Optional[np.ndarray],
-    atol: float = 3.0,
-) -> bool:
-    if expected is None:
-        return True
-    observed = np.asarray(observed, dtype=np.float32).reshape(4)
-    expected = np.asarray(expected, dtype=np.float32).reshape(4)
-    return bool(np.allclose(observed, expected, atol=atol, rtol=0.0))
-
-
 def rgbd_to_camera_points(
     depth_m: np.ndarray,
     intrinsics: np.ndarray,

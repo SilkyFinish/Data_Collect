@@ -3,7 +3,6 @@ import time
 from threading import Event, Lock
 from typing import List, Tuple
 
-import cv2
 import numpy as np
 from pynput import keyboard
 from scipy.spatial.transform import Rotation as Rot
@@ -16,62 +15,12 @@ from r3kit.devices.robot.flexiv.rizon import Rizon
 from r3kit.utils.log import logger, print
 from r3kit.utils.vis import Sequence2DVisualizer
 
-
-MIN_VALID_SAMPLES = 10
-
-
-def sample_paths(save_path: str, idx: int) -> Tuple[str, str]:
-    pose_path = os.path.join(save_path, f"b2g_pose_{idx}.npy")
-    image_path = os.path.join(save_path, f"rgb_{idx}.png")
-    return pose_path, image_path
-
-
-def sample_exists(save_path: str, idx: int) -> bool:
-    pose_path, image_path = sample_paths(save_path, idx)
-    return os.path.exists(pose_path) and os.path.exists(image_path)
-
-
-def next_sample_index(save_path: str) -> int:
-    idx = 0
-    while sample_exists(save_path, idx):
-        idx += 1
-    return idx
-
-
-def load_existing_samples(save_path: str, calibor: HandEyeCalibor) -> int:
-    idx = 0
-    while sample_exists(save_path, idx):
-        pose_path, image_path = sample_paths(save_path, idx)
-        pose = np.load(pose_path)
-        color = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        if color is None:
-            logger.warning(f"Failed to read saved image: {image_path}")
-        elif not calibor.add_image_pose(color, pose, vis=False):
-            logger.warning(f"No ArUco marker detected in saved sample {idx}. Skipped.")
-        idx += 1
-    return idx
-
-
-def save_sample(
-    save_path: str,
-    idx: int,
-    color: np.ndarray,
-    b2g_pose: np.ndarray,
-    intrinsics: List[float],
-    calibor: HandEyeCalibor,
-    vis: bool,
-) -> bool:
-    detected = calibor.add_image_pose(color, b2g_pose, vis=vis)
-    if not detected:
-        logger.warning("No ArUco marker detected. Sample not saved.")
-        return False
-
-    pose_path, image_path = sample_paths(save_path, idx)
-    np.save(pose_path, b2g_pose)
-    cv2.imwrite(image_path, color)
-    np.savetxt(os.path.join(save_path, "intrinsics.txt"), intrinsics, fmt="%.16f")
-    logger.info(f"Saved sample {idx}: {image_path}")
-    return True
+from calib_utils import (
+    load_saved_samples,
+    next_sample_index,
+    run_calibration,
+    save_sample,
+)
 
 
 class HoldKeyState:
@@ -176,29 +125,6 @@ def apply_hold_jog(robot: Rizon, active_keys: set, dt: float, linear_speed: floa
     robot.tcp_move(target)
 
 
-def run_calibration(save_path: str, calibor: HandEyeCalibor, intrinsics: List[float]) -> None:
-    valid_samples = len(calibor.b2g)
-    if valid_samples < MIN_VALID_SAMPLES:
-        raise RuntimeError(f"Not enough valid samples: {valid_samples}, need at least {MIN_VALID_SAMPLES}.")
-
-    K = np.array(
-        [
-            [intrinsics[2], 0.0, intrinsics[0]],
-            [0.0, intrinsics[3], intrinsics[1]],
-            [0.0, 0.0, 1.0],
-        ]
-    )
-    result = calibor.run(intrinsics=K, opt_intrinsics=False, opt_distortion=False)
-    b2c = result["g2c"]
-    c2b = np.linalg.inv(b2c)
-    error = result["error"]
-
-    print(f"c2b: {c2b}")
-    print(f"error: {error}")
-    np.savetxt(os.path.join(save_path, "extrinsics.txt"), c2b, fmt="%.16f")
-    np.savetxt(os.path.join(save_path, "intrinsics.txt"), intrinsics, fmt="%.16f")
-
-
 def main(args: ArgumentParser) -> None:
     os.makedirs(args.save_path, exist_ok=True)
 
@@ -214,9 +140,12 @@ def main(args: ArgumentParser) -> None:
         camera.get()
 
     calibor = HandEyeCalibor(marker_type="aruco", ext_calib_params=args.calib_params)
-    existing_count = load_existing_samples(args.save_path, calibor)
+    existing_samples = load_saved_samples(args.save_path, calibor)
     sample_idx = next_sample_index(args.save_path)
-    logger.info(f"Loaded {existing_count} existing sample slots. Next sample index: {sample_idx}")
+    logger.info(
+        f"Loaded {existing_samples.slots} existing sample slots "
+        f"({existing_samples.valid} valid). Next sample index: {sample_idx}"
+    )
 
     vis2d = Sequence2DVisualizer() if args.gui else None
     keys = HoldKeyState()

@@ -45,6 +45,22 @@ def read_rgbd(color_path: str | Path, depth_path: str | Path) -> tuple[np.ndarra
     return color_bgr, depth_u16
 
 
+def load_intrinsics(path: str | Path) -> np.ndarray:
+    path = Path(path).expanduser()
+    intrinsics = np.loadtxt(path).astype(np.float32).reshape(4)
+    if not np.isfinite(intrinsics).all():
+        raise ValueError(f"Intrinsics contain NaN or Inf: {path}")
+    return intrinsics
+
+
+def resolve_depth_scale(value: str | Path | float) -> float:
+    if isinstance(value, (str, Path)):
+        path = Path(value).expanduser()
+        if path.is_file():
+            return float(np.loadtxt(path).reshape(-1)[0])
+    return float(value)
+
+
 def make_policy_points_from_files(
     color_path: str | Path,
     depth_path: str | Path,

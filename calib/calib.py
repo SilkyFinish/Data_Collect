@@ -9,28 +9,15 @@ from r3kit.devices.robot.flexiv.rizon import Rizon
 from r3kit.devices.camera.realsense.general import RealSenseCamera
 from r3kit.algos.calib.handeye import HandEyeCalibor
 from r3kit.utils.vis import Sequence2DVisualizer
-from r3kit.utils.log import print, logger
+from r3kit.utils.log import logger
 
-
-MIN_VALID_SAMPLES = 10
-
-
-def sample_paths(save_path: str, idx: int) -> Tuple[str, str]:
-    pose_path = os.path.join(save_path, f'b2g_pose_{idx}.npy')
-    image_path = os.path.join(save_path, f'rgb_{idx}.png')
-    return pose_path, image_path
-
-
-def sample_exists(save_path: str, idx: int) -> bool:
-    pose_path, image_path = sample_paths(save_path, idx)
-    return os.path.exists(pose_path) and os.path.exists(image_path)
-
-
-def next_sample_index(save_path: str) -> int:
-    idx = 0
-    while sample_exists(save_path, idx):
-        idx += 1
-    return idx
+from calib_utils import (
+    next_sample_index,
+    run_calibration,
+    sample_exists,
+    sample_paths,
+    save_sample,
+)
 
 
 def jog_robot(robot: Rizon, command: str, step_m: float, step_deg: float) -> bool:
@@ -144,18 +131,12 @@ def main(args: ArgumentParser):
                         raise ValueError
 
             if cmd == 's':
-                detected = calibor.add_image_pose(color, b2g_pose, vis=args.gui)
-                if detected:
-                    pose_path, image_path = sample_paths(args.save_path, i)
-                    np.save(pose_path, b2g_pose)
-                    cv2.imwrite(image_path, color)
-                    np.savetxt(os.path.join(args.save_path, 'intrinsics.txt'), camera.color_intrinsics, fmt="%.16f")
+                if save_sample(args.save_path, i, color, b2g_pose, camera.color_intrinsics, calibor, args.gui):
                     if args.capture_once:
                         logger.info(f"Saved one sample: {i}")
                         return
                     i += 1
                 else:
-                    logger.warning("No ArUco marker detected. Sample not saved.")
                     if args.capture_once:
                         raise RuntimeError("No ArUco marker detected. Sample not saved.")
             elif cmd == 'q':
@@ -172,26 +153,11 @@ def main(args: ArgumentParser):
                 logger.warning(f"No ArUco marker detected in saved sample {i}. Skipped.")
             i += 1
 
-    valid_samples = len(calibor.b2g)
-    if valid_samples < MIN_VALID_SAMPLES:
-        raise RuntimeError(f"Not enough valid samples: {valid_samples}, need at least {MIN_VALID_SAMPLES}.")
-
     if not use_saved_data:
         intrinsics = camera.color_intrinsics
     else:
         intrinsics = np.loadtxt(os.path.join(args.save_path, 'intrinsics.txt'))
-    K = np.array([[intrinsics[2], 0., intrinsics[0]], [0., intrinsics[3], intrinsics[1]], [0., 0., 1.]])
-    result = calibor.run(intrinsics=K, opt_intrinsics=False, opt_distortion=False)
-    # Eye-to-hand: g2c is base -> camera.
-    b2c = result['g2c']
-    error = result['error']
-    c2b = np.linalg.inv(b2c)
-
-    print(f"c2b: {c2b}")
-    print(f"error: {error}")
-    np.savetxt(os.path.join(args.save_path, 'extrinsics.txt'), c2b, fmt="%.16f")
-    np.savetxt(os.path.join(args.save_path, 'extrinsics_before.txt'), b2c, fmt="%.16f")
-    np.savetxt(os.path.join(args.save_path, 'intrinsics.txt'), intrinsics, fmt="%.16f")
+    run_calibration(args.save_path, calibor, intrinsics, save_extrinsics_before=True)
 
 
 if __name__ == '__main__':

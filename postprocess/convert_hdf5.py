@@ -12,9 +12,9 @@ from typing import Iterable
 import numpy as np
 
 try:
-    from .hdf5_utils import make_policy_points_from_files, make_policy_tcp
+    from .hdf5_utils import make_policy_points_from_files, make_policy_tcp, resolve_depth_scale
 except ImportError:
-    from hdf5_utils import make_policy_points_from_files, make_policy_tcp
+    from hdf5_utils import make_policy_points_from_files, make_policy_tcp, resolve_depth_scale
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -123,13 +123,6 @@ def setup_r3kit(r3kit_root: Path) -> None:
         sys.path.insert(0, str(r3kit_root))
 
 
-def resolve_depth_scale(value: str) -> float | Path:
-    path = Path(value)
-    if path.exists():
-        return path
-    return float(value)
-
-
 def discover_sessions(paths: Iterable[Path]) -> list[Path]:
     sessions: list[Path] = []
     for path in paths:
@@ -172,9 +165,26 @@ def select_camera_dir(session_dir: Path, camera_name: str) -> Path:
         ]
         if len(matches) == 1:
             return matches[0]
+        available = ", ".join(path.name for path in candidates) or "none"
+        if not matches:
+            raise ValueError(
+                f"camera '{camera_name}' was not found in {session_dir}. "
+                f"Available cameras: {available}"
+            )
+        raise ValueError(
+            f"camera '{camera_name}' is ambiguous in {session_dir}. "
+            f"Matches: {', '.join(path.name for path in matches)}"
+        )
 
     if len(candidates) == 1:
         return candidates[0]
+    if not candidates:
+        raise ValueError(f"no camera folders found in {session_dir}")
+    raise ValueError(
+        f"multiple camera folders found in {session_dir}: "
+        f"{', '.join(path.name for path in candidates)}. "
+        "Pass --camera-name to choose one."
+    )
 
 
 def parse_frame_index(path: Path) -> int | None:

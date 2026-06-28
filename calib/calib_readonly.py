@@ -14,8 +14,12 @@ from r3kit.utils.log import logger, print
 from r3kit.utils.transformation import xyzquat2mat
 from r3kit.utils.vis import Sequence2DVisualizer
 
-
-MIN_VALID_SAMPLES = 10
+from calib_utils import (
+    load_saved_samples,
+    next_sample_index,
+    run_calibration,
+    save_sample,
+)
 
 
 class KeyEvents:
@@ -35,24 +39,6 @@ class KeyEvents:
             self.save_event.set()
         elif char == "q":
             self.quit_event.set()
-
-
-def sample_paths(save_path: str, idx: int) -> Tuple[str, str]:
-    pose_path = os.path.join(save_path, f"b2g_pose_{idx}.npy")
-    image_path = os.path.join(save_path, f"rgb_{idx}.png")
-    return pose_path, image_path
-
-
-def sample_exists(save_path: str, idx: int) -> bool:
-    pose_path, image_path = sample_paths(save_path, idx)
-    return os.path.exists(pose_path) and os.path.exists(image_path)
-
-
-def next_sample_index(save_path: str) -> int:
-    idx = 0
-    while sample_exists(save_path, idx):
-        idx += 1
-    return idx
 
 
 def detect_aruco_preview(calibor: HandEyeCalibor, image: np.ndarray) -> bool:
@@ -88,74 +74,6 @@ class FlexivStateReader:
         return np.array(self.robot.states().q, dtype=np.float64)
 
 
-def load_saved_samples(save_path: str, calibor: HandEyeCalibor, vis: bool = False) -> int:
-    idx = 0
-    valid = 0
-    while sample_exists(save_path, idx):
-        pose_path, image_path = sample_paths(save_path, idx)
-        pose = np.load(pose_path)
-        color = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        if color is None:
-            logger.warning(f"Failed to read saved image: {image_path}")
-        elif calibor.add_image_pose(color, pose, vis=vis):
-            valid += 1
-        else:
-            logger.warning(f"No ArUco marker detected in saved sample {idx}. Skipped.")
-        idx += 1
-    logger.info(f"Loaded saved samples: slots={idx}, valid={valid}")
-    return valid
-
-
-def save_sample(
-    save_path: str,
-    idx: int,
-    color: np.ndarray,
-    b2g_pose: np.ndarray,
-    intrinsics: List[float],
-    calibor: HandEyeCalibor,
-    vis: bool,
-) -> bool:
-    try:
-        detected = calibor.add_image_pose(color, b2g_pose, vis=vis)
-    except cv2.error as exc:
-        logger.warning(f"ArUco detection failed. Sample not saved. OpenCV error: {exc}")
-        return False
-
-    if not detected:
-        logger.warning("No ArUco marker detected. Sample not saved.")
-        return False
-
-    pose_path, image_path = sample_paths(save_path, idx)
-    np.save(pose_path, b2g_pose)
-    cv2.imwrite(image_path, color)
-    np.savetxt(os.path.join(save_path, "intrinsics.txt"), intrinsics, fmt="%.16f")
-    logger.info(f"Saved sample {idx}: {image_path}")
-    return True
-
-
-def run_calibration(save_path: str, calibor: HandEyeCalibor, intrinsics: np.ndarray) -> None:
-    valid_samples = len(calibor.b2g)
-    if valid_samples < MIN_VALID_SAMPLES:
-        raise RuntimeError(f"Not enough valid samples: {valid_samples}, need at least {MIN_VALID_SAMPLES}.")
-
-    K = np.array(
-        [
-            [intrinsics[2], 0.0, intrinsics[0]],
-            [0.0, intrinsics[3], intrinsics[1]],
-            [0.0, 0.0, 1.0],
-        ]
-    )
-    result = calibor.run(intrinsics=K, opt_intrinsics=False, opt_distortion=False)
-    b2c = result["g2c"]
-    c2b = np.linalg.inv(b2c)
-    error = result["error"]
-
-    print(f"c2b: {c2b}")
-    print(f"error: {error}")
-    np.savetxt(os.path.join(save_path, "extrinsics.txt"), c2b, fmt="%.16f")
-    np.savetxt(os.path.join(save_path, "intrinsics.txt"), intrinsics, fmt="%.16f")
-
-
 class ArgumentParser(Tap):
     robot_id: str = "Rizon4s-063586"
 
@@ -181,7 +99,11 @@ def main(args: ArgumentParser) -> None:
     calibor = HandEyeCalibor(marker_type="aruco", ext_calib_params=args.calib_params)
 
     if args.calibrate_only:
-        load_saved_samples(args.save_path, calibor, vis=args.det_vis)
+        saved_samples = load_saved_samples(args.save_path, calibor, vis=args.det_vis)
+        logger.info(
+            f"Loaded saved samples: slots={saved_samples.slots}, "
+            f"valid={saved_samples.valid}"
+        )
         intrinsics = np.loadtxt(os.path.join(args.save_path, "intrinsics.txt"))
         run_calibration(args.save_path, calibor, intrinsics)
         return
@@ -191,7 +113,11 @@ def main(args: ArgumentParser) -> None:
     for _ in range(args.warmup_frames):
         camera.get()
 
-    load_saved_samples(args.save_path, calibor, vis=False)
+    saved_samples = load_saved_samples(args.save_path, calibor, vis=False)
+    logger.info(
+        f"Loaded saved samples: slots={saved_samples.slots}, "
+        f"valid={saved_samples.valid}"
+    )
     sample_idx = next_sample_index(args.save_path)
     logger.info(f"Next sample index: {sample_idx}")
 
@@ -236,7 +162,16 @@ def main(args: ArgumentParser) -> None:
 
             if cmd == "s":
                 b2g_pose = robot.tcp_read()
-                if save_sample(args.save_path, sample_idx, color, b2g_pose, camera.color_intrinsics, calibor, args.det_vis):
+                if save_sample(
+                    args.save_path,
+                    sample_idx,
+                    color,
+                    b2g_pose,
+                    camera.color_intrinsics,
+                    calibor,
+                    args.det_vis,
+                    catch_cv_error=True,
+                ):
                     if args.capture_once:
                         return
                     sample_idx += 1

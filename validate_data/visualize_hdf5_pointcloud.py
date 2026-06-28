@@ -19,6 +19,7 @@ if str(DATA_COLLECT_ROOT) not in sys.path:
     sys.path.insert(0, str(DATA_COLLECT_ROOT))
 
 try:
+    from postprocess.hdf5_utils import load_intrinsics, read_rgbd, resolve_depth_scale
     from postprocess.pointcloud import load_camera_c2w, summarize_points, transform_points
 except ImportError as exc:
     raise SystemExit(
@@ -246,20 +247,6 @@ def validate_args(args: argparse.Namespace, num_frames: int) -> None:
         raise ValueError("--depth-min/--depth-max must define a positive depth interval.")
 
 
-def load_intrinsics(path: Path) -> np.ndarray:
-    intrinsics = np.loadtxt(path.expanduser()).astype(np.float32).reshape(4)
-    if not np.isfinite(intrinsics).all():
-        raise ValueError(f"Intrinsics contain NaN or Inf: {path}")
-    return intrinsics
-
-
-def resolve_depth_scale(value: str) -> float:
-    path = Path(value).expanduser()
-    if path.is_file():
-        return float(np.loadtxt(path).reshape(-1)[0])
-    return float(value)
-
-
 def make_world_to_camera(camera_c2w_path: Path) -> np.ndarray:
     camera_c2w_path = camera_c2w_path.expanduser()
     if not camera_c2w_path.is_file():
@@ -380,22 +367,6 @@ def source_paths(
         camera_dir / "color" / f"{frame_idx:016d}.png",
         camera_dir / "depth" / f"{frame_idx:016d}.png",
     )
-
-
-def read_rgbd(color_path: Path, depth_path: Path) -> tuple[np.ndarray, np.ndarray]:
-    cv2 = import_cv2()
-    color_bgr = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
-    if color_bgr is None:
-        raise FileNotFoundError(f"failed to read color image: {color_path}")
-
-    depth_u16 = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)
-    if depth_u16 is None:
-        raise FileNotFoundError(f"failed to read depth image: {depth_path}")
-    if depth_u16.ndim == 3:
-        depth_u16 = depth_u16[..., 0]
-    if depth_u16.dtype != np.uint16:
-        raise ValueError(f"depth image must be uint16, got {depth_u16.dtype}: {depth_path}")
-    return color_bgr, depth_u16
 
 
 def resolve_debug_dir(args: argparse.Namespace, hdf5_path: Path, demo_name: str) -> Path:
