@@ -1,2 +1,5 @@
 /submodule/
 /calib/.logs/
+/collect/run_dual_collect.sh
+/postprocess/run_convert_hdf5.sh
+/validate_data/run_validate_hdf5.sh
