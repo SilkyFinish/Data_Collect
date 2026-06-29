@@ -17,11 +17,11 @@ FIRST_SN="Rizon4s-063652"
 SECOND_SN="Rizon4s-063586"
 
 # Data collection
-SAVE_ROOT="/home/xense/flexiv_hizon4s/Data/pick_test"
+SAVE_ROOT="/home/xense/flexiv_rizon4s_workspace/Data/pick_0629"
 SESSION_NAME=""
 FPS="30"
 
-# Gripper collection: true or false.
+# Gripper collection: true or false.kkdfdddjjjjjjjjj
 # Master side uses Angler encoder, slave side uses Xense.
 USE_GRIPPER="true"
 SLAVE_GRIPPER_ID="1659f0e0dde0"

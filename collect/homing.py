@@ -29,14 +29,18 @@ def main():
     args = parse_args()
     if args.robot_id == 1:
         robot_sn = "Rizon4s-063652"
+        print(f"Homing robot {args.robot_id}: {robot_sn}")
+        robot = Rizon(id=robot_sn, gripper=False, name="Rizon4s", tool_name="tool1")
     elif args.robot_id == 2:
         robot_sn = "Rizon4s-063586"
+        print(f"Homing robot {args.robot_id}: {robot_sn}")
+        robot = Rizon(id=robot_sn, gripper=False, name="Rizon4s", tool_name="xense")
     else:
         raise ValueError("Invalid robot ID")
 
-    print(f"Homing robot {args.robot_id}: {robot_sn}")
-    robot = Rizon(id=robot_sn, gripper=False, name="Rizon4s")
+    robot.motion_mode("joint")
     robot.homing()
+    robot.motion_mode("primitive")
     print("Homing command finished")
 
 
